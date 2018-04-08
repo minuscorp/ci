@@ -37,18 +37,6 @@ module FastlaneCI
     def initialize(provider_credential: nil)
       @provider_credential = provider_credential
       @_client = Octokit::Client.new(access_token: provider_credential.api_token)
-      begin
-        if client.rate_limit!.remaining.zero?
-          sleep_time = client.rate_limit!.resets_in
-          logger.error("Rate Limit exceeded, sleeping for #{sleep_time} seconds")
-          sleep(sleep_time)
-        end
-      rescue Octokit::TooManyRequests => ex
-        logger.error(ex)
-        raise ex
-      rescue Octokit::Unauthorized => ex # Maybe the token does not give access to rate limits.
-        logger.error(ex)
-      end
       Octokit.auto_paginate = true # TODO: just for now, we probably should do smart pagination in the future
     end
 
@@ -56,8 +44,9 @@ module FastlaneCI
       required = "repo"
       scopes = []
 
-      github_action do
-        scopes = Octokit::Client.new.scopes(token)
+      client = Octokit::Client.new(access_token: token)
+      github_action(client) do
+        scopes = client.scopes
       end
 
       if scopes.include?(required)
@@ -85,7 +74,7 @@ module FastlaneCI
     # branches should be nil if you want all branches to be considered
     def open_pull_requests(repo_full_name: nil, branches: nil)
       all_open_pull_requests = []
-      github_action do
+      github_action(client) do
         all_open_pull_requests = client.pull_requests(repo_full_name, state: "open").map do |pr|
           GitHubOpenPR.new(
             current_sha: pr.head.sha,
@@ -118,7 +107,7 @@ module FastlaneCI
     def statuses_for_commit_sha(repo_full_name: nil, sha: nil)
       all_statuses = []
 
-      github_action do
+      github_action(client) do
         all_statuses = client.statuses(repo_full_name, sha)
       end
 
@@ -162,21 +151,21 @@ module FastlaneCI
     end
 
     def recent_commits(repo_full_name:, branch:, since_time_utc:)
-      github_action do
+      github_action(client) do
         next client.commits_since(repo_full_name, since_time_utc, branch)
       end
     end
 
     # TODO: parse those here or in service layer?
     def repos
-      github_action do
+      github_action(client) do
         next client.repos({}, query: { sort: "asc" })
       end
     end
 
     # @return [Array<String>] names of the branches for the given repo
     def branch_names(repo:)
-      github_action do
+      github_action(client) do
         next client.branches(repo).map(&:name)
       end
     end
@@ -184,7 +173,7 @@ module FastlaneCI
     # Does the client with the associated credentials have access to the specified repo?
     # @repo [String] Repo URL as string
     def access_to_repo?(repo_url: nil)
-      github_action do
+      github_action(client) do
         next client.repository?(repo_url.sub("https://github.com/", ""))
       end
     end
@@ -222,7 +211,7 @@ module FastlaneCI
       if remote_status_updates_disabled?
         logger.debug("Remote status updates are disabled, remote build status not updated.")
       else
-        github_action do
+        github_action(client) do
           client.create_status(repo, sha, state, {
             target_url: target_url,
             description: description,
