@@ -6,13 +6,21 @@ require_relative "../shared/models/git_repo"
 require_relative "../shared/logging_module"
 require_relative "./user_service"
 require_relative "./services"
-require_relative "../services/code_hosting/decorators/git_repo_decorator"
+
+require_relative "../shared/method_decorator"
+require_relative "../shared/decorators/git_repo_decorator"
 
 module FastlaneCI
   # Provides access to projects
   class ProjectService
     include FastlaneCI::Logging
-    include FastlaneCI::GitRepoDecorator
+    extend FastlaneCI::MethodDecorator
+
+    decorate(:create_project!) { @decorator.method(:commit_after) }
+    decorate(:update_project!) { @decorator.method(:commit_after) }
+    decorate(:delete_project!) { @decorator.method(:commit_after) }
+    decorate(:project) { @decorator.method(:pull_before) }
+    decorate(:projects) { @decorator.method(:pull_before) }
 
     attr_accessor :project_data_source
 
@@ -22,7 +30,7 @@ module FastlaneCI
           raise "project_data_source must be descendant of #{ProjectDataSource.name}"
         end
       end
-      GitRepoDecorator.configuration_repository(Services.configuration_git_repo)
+      @decorator = Decorators::GitRepoDecorator.new(Services.configuration_git_repo)
       self.project_data_source = project_data_source
     end
 
@@ -63,12 +71,10 @@ module FastlaneCI
       raise "Project couldn't be created" if project.nil?
       return project
     end
-    commit_after(:create_project!)
 
     def update_project!(project: nil)
-      self.project_data_source.update_project!(project: project)
+      project_data_source.update_project!(project: project)
     end
-    commit_after(:update_project!)
 
     # @return [Project]
     def project(name: nil)
@@ -77,13 +83,11 @@ module FastlaneCI
                                   .detect { |existing_project| existing_project.project_name.casecmp(name).zero? }
       end
     end
-    pull_before(:project)
 
     # @return [Project]
     def project_by_id(id)
       return project_data_source.projects.detect { |project| project.id == id }
     end
-    pull_before(:project_by_id)
 
     # TODO: remove this, we shouldn't be exposing implicitly private variables here
     # @return [GitRepo]
@@ -100,12 +104,10 @@ module FastlaneCI
     def projects
       return project_data_source.projects
     end
-    pull_before(:projects)
 
     def delete_project!(project: nil)
-      self.project_data_source.delete_project!(project: project)
+      project_data_source.delete_project!(project: project)
     end
-    commit_after(:delete_project!)
 
     def push_configuration_repo_changes!
       Services.configuration_git_repo.push
